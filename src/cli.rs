@@ -56,7 +56,7 @@ pub struct Cli {
     pub init: bool,
 
     // Tmux options
-    /// Run in tmux session (default when tmux is available)
+    /// Run in tmux session
     #[arg(long, env = "RALPH_TMUX", global = true)]
     pub tmux: bool,
 

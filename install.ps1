@@ -1,27 +1,55 @@
 $ErrorActionPreference = "Stop"
 
-$CrateName = "ralph"
-$RepoUrl = "https://github.com/madhavajay/ralph"
+$Repo = "madhavajay/ralph"
+$BinName = "ralph"
 
-if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Write-Error "cargo is required to install ralph. Install Rust from https://rustup.rs and re-run this script."
+function Fail {
+    param([string]$Message)
+    Write-Error $Message
+    Write-Error "If no prebuilt binary is available, use: cargo install ralph"
     exit 1
 }
 
-Write-Host "Installing $CrateName..."
-
-& cargo install --locked $CrateName
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "OK: installed via crates.io"
-    exit 0
+$Arch = $env:PROCESSOR_ARCHITECTURE
+switch ($Arch) {
+    "AMD64" { $Arch = "x86_64" }
+    "ARM64" { $Arch = "aarch64" }
+    default { Fail "unsupported arch: $Arch" }
 }
 
-Write-Host "cargo install $CrateName failed, trying GitHub source..."
-& cargo install --locked --git $RepoUrl $CrateName
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "OK: installed from GitHub source"
-    exit 0
+$Target = "$Arch-pc-windows-msvc"
+$Asset = "$BinName-$Target.zip"
+$Url = "https://github.com/$Repo/releases/latest/download/$Asset"
+
+$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+$ZipPath = Join-Path $TempDir $Asset
+
+try {
+    Invoke-WebRequest -Uri $Url -OutFile $ZipPath
+} catch {
+    Fail "failed to download $Url"
 }
 
-Write-Error "Install failed."
-exit 1
+try {
+    Expand-Archive -Path $ZipPath -DestinationPath $TempDir -Force
+} catch {
+    Fail "failed to extract $ZipPath"
+}
+
+$BinPath = Get-ChildItem -Path $TempDir -Recurse -Filter "$BinName.exe" | Select-Object -First 1
+if (-not $BinPath) {
+    Fail "download succeeded but $BinName.exe not found in archive"
+}
+
+$BaseDir = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:USERPROFILE }
+$InstallDir = Join-Path $BaseDir "ralph\bin"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+Copy-Item -Force $BinPath.FullName (Join-Path $InstallDir "$BinName.exe")
+
+Write-Host "Installed $BinName to $InstallDir\$BinName.exe"
+if (($env:Path -split ';') -notcontains $InstallDir) {
+    Write-Host "Note: $InstallDir is not on your PATH. Add it to use '$BinName' directly."
+}
+
+Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue

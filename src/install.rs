@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use std::process::Command;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PackageManager {
     Brew,
     Npm,
@@ -117,7 +117,11 @@ pub fn run_install(agent: Option<String>, all: bool, list: bool) -> Result<()> {
     }
 
     if managers.is_empty() {
-        bail!("No supported package manager detected. Install brew, npm, cargo, pip, or winget.");
+        let supported = supported_manager_labels();
+        bail!(
+            "No supported package manager detected. Install one of: {}.",
+            supported.join(", ")
+        );
     }
 
     let mut installed_any = false;
@@ -165,10 +169,12 @@ pub fn run_install(agent: Option<String>, all: bool, list: bool) -> Result<()> {
 }
 
 fn detect_package_managers() -> Vec<PackageManager> {
+    let supported: std::collections::HashSet<PackageManager> =
+        INSTALL_METHODS.iter().map(|m| m.manager).collect();
     PACKAGE_MANAGER_ORDER
         .iter()
         .copied()
-        .filter(|manager| which::which(manager.command()).is_ok())
+        .filter(|manager| supported.contains(manager) && which::which(manager.command()).is_ok())
         .collect()
 }
 
@@ -212,6 +218,16 @@ fn supported_managers(agent: &str) -> Vec<&'static str> {
     let mut managers: Vec<&'static str> = INSTALL_METHODS
         .iter()
         .filter(|m| m.agent == agent)
+        .map(|m| m.manager.label())
+        .collect();
+    managers.sort();
+    managers.dedup();
+    managers
+}
+
+fn supported_manager_labels() -> Vec<&'static str> {
+    let mut managers: Vec<&'static str> = INSTALL_METHODS
+        .iter()
         .map(|m| m.manager.label())
         .collect();
     managers.sort();

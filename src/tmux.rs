@@ -45,12 +45,11 @@ pub fn start_in_tmux(
     args: &[String],
     attach: bool,
 ) -> Result<()> {
-    // Build the full command string
-    let full_command = format!("{} {}", command, args.join(" "));
-
     // Create new detached tmux session
     let status = Command::new("tmux")
-        .args(["new-session", "-d", "-s", session_name, &full_command])
+        .args(["new-session", "-d", "-s", session_name])
+        .arg(command)
+        .args(args)
         .status()
         .context("Failed to start tmux session")?;
 

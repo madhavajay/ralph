@@ -91,7 +91,9 @@ fn detect_via_codexbar(provider: &str) -> Option<String> {
 
 /// Detect version by running command --version
 fn detect_version(command: &str, _path: &std::path::Path) -> Option<String> {
-    let output = Command::new(command).arg("--version").output().ok()?;
+    let mut cmd = Command::new(command);
+    cmd.arg("--version");
+    let output = command_output_with_timeout(cmd, Duration::from_secs(3))?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);

@@ -68,7 +68,7 @@ reasoning_effort = "medium"
 # fallback_harness = "gemini"
 
 # Tmux settings
-# tmux = true
+# tmux = false
 # tmux_session_prefix = "ralph"
 # tmux_attach = false
 
@@ -449,8 +449,7 @@ async fn main() -> Result<()> {
     } else if cli.tmux {
         true
     } else {
-        // Check config, default to true if tmux is available
-        config.tmux.unwrap_or_else(tmux::tmux_available)
+        config.tmux.unwrap_or(false)
     };
 
     let tmux_attach = cli.tmux_attach || config.tmux_attach.unwrap_or(false);

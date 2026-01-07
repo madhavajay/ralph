@@ -8,6 +8,8 @@ Ralph wraps multiple AI CLI agents (Codex, Claude, Pi, Gemini) providing a unifi
 
 ### Quick Install (Recommended)
 
+The install scripts download the latest prebuilt binary from GitHub Releases.
+
 **macOS / Linux:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/madhavajay/ralph/main/install.sh | bash
@@ -23,6 +25,8 @@ irm https://raw.githubusercontent.com/madhavajay/ralph/main/install.ps1 | iex
 ```bash
 cargo install ralph
 ```
+
+Use this when you prefer building from source or if no prebuilt binary is available for your platform.
 
 ### From Source
 
@@ -53,7 +57,7 @@ ralph install pi       # Installs Pi CLI
 ralph install --all
 ```
 
-Ralph automatically detects your package manager (brew, npm, cargo, pip/pipx, winget) and OS to use the appropriate install method.
+Ralph installs supported agents via the detected package manager (currently npm).
 
 ## Usage
 
@@ -110,6 +114,7 @@ ralph --init > .ralphrc
 Example configuration:
 
 ```toml
+# Example configuration with all optional toggles enabled
 # Agent harness: codex, claude, pi, gemini
 harness = "codex"
 
@@ -130,6 +135,12 @@ reasoning_effort = "medium"
 
 # Provider for pi harness (anthropic, openai, google, etc.)
 # provider = "anthropic"
+
+# Enable tmux sessions
+tmux = true
+
+# Attach to tmux after starting
+tmux_attach = true
 ```
 
 ## CLI Options
@@ -161,7 +172,7 @@ Options:
       --provider <PROVIDER>      Provider for pi harness (anthropic, openai, google, etc.)
       --list-harnesses           List available harnesses and exit
       --init                     Generate example .ralphrc config file
-      --tmux                     Run in tmux session (default when tmux is available)
+      --tmux                     Run in tmux session
       --no-tmux                  Run in foreground without tmux
       --tmux-attach              Attach to tmux session after starting
       --usage-limit-daily <N>    Stop at daily usage percentage (0-100)
@@ -176,7 +187,15 @@ Options:
 
 ### Tmux Sessions
 
-When tmux is available, ralph runs in a tmux session by default. Session names include timestamp and PID, and ralph will auto-suffix if a name is already in use to avoid collisions.
+Tmux sessions are optional. Use `--tmux` or set `tmux = true` in your config. Session names include timestamp and PID, and ralph will auto-suffix if a name is already in use to avoid collisions.
+
+## Spec Generation Template
+
+Use `SPEC_TEMPLATE.md` to regenerate `SPEC.md` with any supported harness:
+
+```bash
+ralph -H codex SPEC_TEMPLATE.md
+```
 
 ### Process Management
 

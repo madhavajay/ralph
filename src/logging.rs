@@ -1,15 +1,62 @@
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+static LOG_DIR: LazyLock<PathBuf> = LazyLock::new(resolve_log_dir);
+
 /// Get the log directory (defaults to ~/.ralph/logs)
 pub fn log_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".ralph")
-        .join("logs")
+    LOG_DIR.clone()
+}
+
+fn resolve_log_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("RALPH_LOG_DIR") {
+        let path = PathBuf::from(dir);
+        if ensure_writable_dir(&path) {
+            return path;
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let path = home.join(".ralph").join("logs");
+        if ensure_writable_dir(&path) {
+            return path;
+        }
+    }
+
+    if let Ok(xdg_state) = std::env::var("XDG_STATE_HOME") {
+        let path = PathBuf::from(xdg_state).join("ralph").join("logs");
+        if ensure_writable_dir(&path) {
+            return path;
+        }
+    }
+
+    if let Ok(xdg_cache) = std::env::var("XDG_CACHE_HOME") {
+        let path = PathBuf::from(xdg_cache).join("ralph").join("logs");
+        if ensure_writable_dir(&path) {
+            return path;
+        }
+    }
+
+    std::env::temp_dir().join(".ralph").join("logs")
+}
+
+fn ensure_writable_dir(path: &Path) -> bool {
+    if std::fs::create_dir_all(path).is_err() {
+        return false;
+    }
+
+    let test_path = path.join(format!(".write-test-{}", std::process::id()));
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&test_path)
+        .is_ok();
+    let _ = std::fs::remove_file(&test_path);
+    result
 }
 
 /// Get the current log file path
