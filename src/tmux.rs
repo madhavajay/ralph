@@ -222,10 +222,7 @@ pub fn session_label(session: &TmuxSession) -> String {
 }
 
 pub fn print_sessions(sessions: &[TmuxSession]) {
-    println!(
-        "{:<24} {:<9} {:<7} {}",
-        "SESSION", "STATUS", "WINDOWS", "CREATED"
-    );
+    println!("{:<24} {:<9} {:<7} CREATED", "SESSION", "STATUS", "WINDOWS");
     for session in sessions {
         let status = if session.attached {
             "attached"

@@ -24,41 +24,41 @@ fn process_is_alive(pid: u32) -> bool {
         if std::path::Path::new(&format!("/proc/{}", pid)).exists() {
             return true;
         }
-        return unix_pid_exists(pid);
+        unix_pid_exists(pid)
     }
 
     #[cfg(all(unix, not(target_os = "linux")))]
     {
-        return unix_pid_exists(pid);
+        unix_pid_exists(pid)
     }
 
     #[cfg(windows)]
     {
-        return windows_pid_exists(pid);
+        windows_pid_exists(pid)
     }
 }
 
 fn send_terminate(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        return unix_send_signal(pid, "-TERM");
+        unix_send_signal(pid, "-TERM")
     }
 
     #[cfg(windows)]
     {
-        return windows_taskkill(pid, false);
+        windows_taskkill(pid, false)
     }
 }
 
 fn send_kill(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        return unix_send_signal(pid, "-KILL");
+        unix_send_signal(pid, "-KILL")
     }
 
     #[cfg(windows)]
     {
-        return windows_taskkill(pid, true);
+        windows_taskkill(pid, true)
     }
 }
 
