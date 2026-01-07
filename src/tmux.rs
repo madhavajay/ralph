@@ -210,7 +210,11 @@ pub fn list_ralph_sessions() -> Result<Vec<TmuxSession>> {
 }
 
 pub fn session_label(session: &TmuxSession) -> String {
-    let status = if session.attached { "attached" } else { "detached" };
+    let status = if session.attached {
+        "attached"
+    } else {
+        "detached"
+    };
     format!(
         "{}  [{}]  {}w  {}",
         session.name, status, session.windows, session.created
@@ -218,9 +222,16 @@ pub fn session_label(session: &TmuxSession) -> String {
 }
 
 pub fn print_sessions(sessions: &[TmuxSession]) {
-    println!("{:<24} {:<9} {:<7} {}", "SESSION", "STATUS", "WINDOWS", "CREATED");
+    println!(
+        "{:<24} {:<9} {:<7} {}",
+        "SESSION", "STATUS", "WINDOWS", "CREATED"
+    );
     for session in sessions {
-        let status = if session.attached { "attached" } else { "detached" };
+        let status = if session.attached {
+            "attached"
+        } else {
+            "detached"
+        };
         println!(
             "{:<24} {:<9} {:<7} {}",
             session.name, status, session.windows, session.created

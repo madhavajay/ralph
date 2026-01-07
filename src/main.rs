@@ -413,8 +413,7 @@ async fn main() -> Result<()> {
                     return Ok(());
                 }
 
-                let labels: Vec<String> =
-                    sessions.iter().map(tmux::session_label).collect();
+                let labels: Vec<String> = sessions.iter().map(tmux::session_label).collect();
                 let selection = Select::with_theme(&ColorfulTheme::default())
                     .with_prompt("Select a ralph tmux session")
                     .items(&labels)

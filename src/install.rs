@@ -226,10 +226,8 @@ fn supported_managers(agent: &str) -> Vec<&'static str> {
 }
 
 fn supported_manager_labels() -> Vec<&'static str> {
-    let mut managers: Vec<&'static str> = INSTALL_METHODS
-        .iter()
-        .map(|m| m.manager.label())
-        .collect();
+    let mut managers: Vec<&'static str> =
+        INSTALL_METHODS.iter().map(|m| m.manager.label()).collect();
     managers.sort();
     managers.dedup();
     managers
