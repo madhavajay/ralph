@@ -1,6 +1,6 @@
 [package]
 name = "ralph"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Madhava Jay <madhava@openmined.org>"]
 description = "A CLI agent harness for running AI coding agents (Codex, Claude, Pi, Gemini)"
