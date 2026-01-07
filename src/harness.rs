@@ -206,12 +206,14 @@ impl Runner {
     }
 
     fn process_claude_json(json: &serde_json::Value) {
+        use std::io::Write;
         match json.get("type").and_then(|t| t.as_str()) {
             Some("system") => {
                 // Init message - optionally show session info
                 if json.get("subtype").and_then(|s| s.as_str()) == Some("init") {
                     if let Some(model) = json.get("model").and_then(|m| m.as_str()) {
                         println!("claude [{}]", model);
+                        let _ = std::io::stdout().flush();
                     }
                 }
             }
@@ -219,12 +221,21 @@ impl Runner {
                 // Assistant messages contain content in message.content array
                 if let Some(message) = json.get("message") {
                     Self::process_claude_content(message.get("content"));
+                    let _ = std::io::stdout().flush();
                 }
             }
             Some("user") => {
-                // Tool results come back as user messages
-                if json.get("tool_use_result").is_some() {
-                    println!("✓ done");
+                // Tool results come back as user messages with content array
+                // containing items with type: "tool_result"
+                if let Some(message) = json.get("message") {
+                    if let Some(content) = message.get("content").and_then(|c| c.as_array()) {
+                        for item in content {
+                            if item.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                                println!("✓ done");
+                                let _ = std::io::stdout().flush();
+                            }
+                        }
+                    }
                 }
             }
             Some("result") => {
@@ -253,6 +264,7 @@ impl Runner {
                 if let Some(cost) = json.get("total_cost_usd").and_then(|c| c.as_f64()) {
                     println!("Cost: ${:.4}", cost);
                 }
+                let _ = std::io::stdout().flush();
             }
             _ => {}
         }
@@ -286,9 +298,6 @@ impl Runner {
             Some("tool_use") => {
                 Self::print_claude_tool_use(item);
             }
-            Some("tool_result") => {
-                Self::print_claude_tool_result(item);
-            }
             _ => {}
         }
     }
@@ -302,10 +311,6 @@ impl Runner {
         let input = json.get("input").map(|i| i.to_string()).unwrap_or_default();
         let truncated: String = input.chars().take(80).collect();
         println!("\n⚡ {} {}...", name, truncated);
-    }
-
-    fn print_claude_tool_result(_json: &serde_json::Value) {
-        println!("✓ done\n");
     }
 
     async fn run_pi(&self, prompt: &str) -> Result<()> {
