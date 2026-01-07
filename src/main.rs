@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod harness;
 mod install;
+mod logging;
 mod monitor;
 mod process;
 mod provider;
@@ -12,6 +13,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tracing::{debug, error, info, trace, warn};
 
 use cli::{Cli, Commands};
 use config::Config;
@@ -147,6 +149,18 @@ fn apply_usage_limits(
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle --log-file flag early (before logging init)
+    if cli.log_file {
+        println!("{}", logging::current_log_file().display());
+        return Ok(());
+    }
+
+    // Initialize logging (keep guard alive for program duration)
+    let _log_guard = logging::init_logging(cli.verbose, cli.log_stderr)?;
+
+    info!(version = env!("CARGO_PKG_VERSION"), "ralph starting");
+    trace!(?cli, "parsed CLI arguments");
 
     // Handle subcommands first
     if let Some(cmd) = &cli.command {
@@ -303,6 +317,65 @@ async fn main() -> Result<()> {
                                 }
                             }
                         }
+                    }
+                }
+                return Ok(());
+            }
+            Commands::Logs {
+                lines,
+                follow,
+                path,
+                clear,
+            } => {
+                let log_file = logging::current_log_file();
+
+                if *path {
+                    println!("{}", log_file.display());
+                    return Ok(());
+                }
+
+                if *clear {
+                    let log_dir = logging::log_dir();
+                    if log_dir.exists() {
+                        for entry in std::fs::read_dir(&log_dir)? {
+                            let entry = entry?;
+                            if entry.path().extension().map(|e| e == "log").unwrap_or(false)
+                                || entry.file_name().to_string_lossy().starts_with("ralph.")
+                            {
+                                std::fs::remove_file(entry.path())?;
+                                println!("Removed: {}", entry.path().display());
+                            }
+                        }
+                    }
+                    println!("Logs cleared");
+                    return Ok(());
+                }
+
+                if !log_file.exists() {
+                    println!("No log file found at: {}", log_file.display());
+                    println!("Run ralph with -v to enable logging");
+                    return Ok(());
+                }
+
+                if *follow {
+                    // Use tail -f for following
+                    let status = std::process::Command::new("tail")
+                        .args(["-f", &log_file.to_string_lossy()])
+                        .status()?;
+                    if !status.success() {
+                        bail!("tail command failed");
+                    }
+                } else {
+                    // Read and display last N lines
+                    let content = std::fs::read_to_string(&log_file)?;
+                    let all_lines: Vec<&str> = content.lines().collect();
+                    let start = if *lines == 0 || *lines >= all_lines.len() {
+                        0
+                    } else {
+                        all_lines.len() - *lines
+                    };
+                    for line in &all_lines[start..] {
+                        println!("{}", line);
                     }
                 }
                 return Ok(());

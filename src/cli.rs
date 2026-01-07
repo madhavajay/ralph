@@ -88,6 +88,18 @@ pub struct Cli {
     /// Switch to this harness when usage limit reached
     #[arg(long, global = true)]
     pub fallback_harness: Option<String>,
+
+    /// Verbose logging (-v for debug, -vv for trace)
+    #[arg(short = 'v', long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
+    /// Also log to stderr (in addition to log file)
+    #[arg(long, global = true)]
+    pub log_stderr: bool,
+
+    /// Show log file location
+    #[arg(long)]
+    pub log_file: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -191,6 +203,25 @@ pub enum Commands {
         /// Kill discovered orphans instead of just registering
         #[arg(long)]
         kill_orphans: bool,
+    },
+
+    /// View and manage logs
+    Logs {
+        /// Number of lines to tail (0 for all)
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+
+        /// Follow log output (like tail -f)
+        #[arg(short = 'f', long)]
+        follow: bool,
+
+        /// Show log file path only
+        #[arg(long)]
+        path: bool,
+
+        /// Clear all log files
+        #[arg(long)]
+        clear: bool,
     },
 }
 

@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tracing::{debug, error, info, instrument, trace};
 
 use crate::process;
 
@@ -78,13 +79,20 @@ impl Runner {
         }
     }
 
+    #[instrument(skip(self, prompt), fields(harness = %self.harness.command_name(), model = %self.model))]
     pub async fn run(&self, prompt: &str) -> Result<()> {
-        match self.harness {
+        info!(prompt_len = prompt.len(), "starting agent run");
+        let result = match self.harness {
             Harness::Codex => self.run_codex(prompt).await,
             Harness::Claude => self.run_claude(prompt).await,
             Harness::Pi => self.run_pi(prompt).await,
             Harness::Gemini => self.run_gemini(prompt).await,
+        };
+        match &result {
+            Ok(()) => info!("agent run completed successfully"),
+            Err(e) => error!(error = %e, "agent run failed"),
         }
+        result
     }
 
     async fn run_codex(&self, prompt: &str) -> Result<()> {
@@ -110,18 +118,23 @@ impl Runner {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
+        debug!("spawning codex process");
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
+        info!(pid, "codex process spawned");
 
         // Register the process for tracking
         let _ = process::register_process(pid, "codex", &self.model, None);
 
         let status = child.wait().await?;
+        debug!(pid, ?status, "codex process exited");
 
         // Unregister when done
         let _ = process::unregister_process(pid);
+        trace!(pid, "unregistered codex process");
 
         if !status.success() {
+            error!(pid, ?status, "codex exited with non-zero status");
             bail!("codex exited with status: {}", status);
         }
         Ok(())
@@ -144,8 +157,10 @@ impl Runner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        debug!("spawning claude process");
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
+        info!(pid, "claude process spawned");
 
         // Register the process for tracking
         let _ = process::register_process(pid, "claude", &self.model, None);
@@ -175,13 +190,16 @@ impl Runner {
         });
 
         let status = child.wait().await?;
+        debug!(pid, ?status, "claude process exited");
         let _ = stdout_handle.await;
         let _ = stderr_handle.await;
 
         // Unregister when done
         let _ = process::unregister_process(pid);
+        trace!(pid, "unregistered claude process");
 
         if !status.success() {
+            error!(pid, ?status, "claude exited with non-zero status");
             bail!("claude exited with status: {}", status);
         }
         Ok(())
@@ -189,18 +207,52 @@ impl Runner {
 
     fn process_claude_json(json: &serde_json::Value) {
         match json.get("type").and_then(|t| t.as_str()) {
-            Some("assistant") => {
-                if let Some(message) = json.get("message") {
-                    Self::process_claude_content(message.get("content"));
-                } else {
-                    Self::process_claude_content(json.get("content"));
+            Some("system") => {
+                // Init message - optionally show session info
+                if json.get("subtype").and_then(|s| s.as_str()) == Some("init") {
+                    if let Some(model) = json.get("model").and_then(|m| m.as_str()) {
+                        println!("claude [{}]", model);
+                    }
                 }
             }
-            Some("tool_use") => {
-                Self::print_claude_tool_use(json);
+            Some("assistant") => {
+                // Assistant messages contain content in message.content array
+                if let Some(message) = json.get("message") {
+                    Self::process_claude_content(message.get("content"));
+                }
             }
-            Some("tool_result") => {
-                Self::print_claude_tool_result(json);
+            Some("user") => {
+                // Tool results come back as user messages
+                if json.get("tool_use_result").is_some() {
+                    println!("✓ done");
+                }
+            }
+            Some("result") => {
+                // Final result with stats
+                if let Some(usage) = json.get("usage") {
+                    let input = usage.get("input_tokens").and_then(|v| v.as_u64());
+                    let output = usage.get("output_tokens").and_then(|v| v.as_u64());
+                    let cache_read = usage
+                        .get("cache_read_input_tokens")
+                        .and_then(|v| v.as_u64());
+                    if input.is_some() || output.is_some() {
+                        println!(
+                            "\nTokens: in:{} out:{} cached:{}",
+                            input
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                            output
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                            cache_read
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string())
+                        );
+                    }
+                }
+                if let Some(cost) = json.get("total_cost_usd").and_then(|c| c.as_f64()) {
+                    println!("Cost: ${:.4}", cost);
+                }
             }
             _ => {}
         }
@@ -242,18 +294,14 @@ impl Runner {
     }
 
     fn print_claude_tool_use(json: &serde_json::Value) {
+        // Claude stream-json uses "name" and "input" for tool use
         let name = json
-            .get("tool_name")
-            .or_else(|| json.get("name"))
+            .get("name")
             .and_then(|n| n.as_str())
             .unwrap_or("unknown");
-        let input = json
-            .get("tool_input")
-            .or_else(|| json.get("input"))
-            .map(|i| i.to_string())
-            .unwrap_or_default();
+        let input = json.get("input").map(|i| i.to_string()).unwrap_or_default();
         let truncated: String = input.chars().take(80).collect();
-        println!("\n⚡ {} {}...\n", name, truncated);
+        println!("\n⚡ {} {}...", name, truncated);
     }
 
     fn print_claude_tool_result(_json: &serde_json::Value) {
@@ -276,18 +324,23 @@ impl Runner {
         // Note: Pi has tools enabled by default (read, bash, edit, write)
         // No dangerous flag needed
 
+        debug!("spawning pi process");
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
+        info!(pid, provider = %self.provider, "pi process spawned");
 
         // Register the process for tracking
         let _ = process::register_process(pid, "pi", &self.model, None);
 
         let status = child.wait().await?;
+        debug!(pid, ?status, "pi process exited");
 
         // Unregister when done
         let _ = process::unregister_process(pid);
+        trace!(pid, "unregistered pi process");
 
         if !status.success() {
+            error!(pid, ?status, "pi exited with non-zero status");
             bail!("pi exited with status: {}", status);
         }
         Ok(())
@@ -314,8 +367,10 @@ impl Runner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        debug!("spawning gemini process");
         let mut child = cmd.spawn()?;
         let pid = child.id().unwrap_or(0);
+        info!(pid, "gemini process spawned");
 
         // Register the process for tracking
         let _ = process::register_process(pid, "gemini", &self.model, None);
@@ -345,13 +400,16 @@ impl Runner {
         });
 
         let status = child.wait().await?;
+        debug!(pid, ?status, "gemini process exited");
         let _ = stdout_handle.await;
         let _ = stderr_handle.await;
 
         // Unregister when done
         let _ = process::unregister_process(pid);
+        trace!(pid, "unregistered gemini process");
 
         if !status.success() {
+            error!(pid, ?status, "gemini exited with non-zero status");
             bail!("gemini exited with status: {}", status);
         }
         Ok(())
