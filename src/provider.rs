@@ -1,5 +1,6 @@
 use anyhow::Result;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Represents a detected provider with its metadata
 #[derive(Debug, Clone)]
@@ -66,10 +67,9 @@ pub fn detect_provider(name: &str, command: &'static str, cli_name: &'static str
 
 /// Detect provider via codexbar
 fn detect_via_codexbar(provider: &str) -> Option<String> {
-    let output = Command::new("codexbar")
-        .args(["--provider", provider, "--source", "cli"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("codexbar");
+    cmd.args(["--provider", provider, "--source", "cli"]);
+    let output = command_output_with_timeout(cmd, Duration::from_secs(5))?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -100,6 +100,27 @@ fn detect_version(command: &str, _path: &std::path::Path) -> Option<String> {
         // Some CLIs output version to stderr
         let stderr = String::from_utf8_lossy(&output.stderr);
         extract_version(&stderr)
+    }
+}
+
+fn command_output_with_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+) -> Option<std::process::Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    let start = Instant::now();
+
+    loop {
+        if let Ok(Some(_)) = child.try_wait() {
+            return child.wait_with_output().ok();
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

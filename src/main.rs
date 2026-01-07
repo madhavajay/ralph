@@ -1,7 +1,9 @@
 mod cli;
 mod config;
 mod harness;
+mod install;
 mod monitor;
+mod process;
 mod provider;
 mod tmux;
 mod usage;
@@ -81,7 +83,65 @@ fn list_harnesses() {
     println!("  codex   - OpenAI Codex CLI agent (default model: gpt-5.2-codex)");
     println!("  claude  - Anthropic Claude CLI agent (default model: claude-opus-4-5-20251101)");
     println!("  pi      - Pi CLI agent (default provider: anthropic, model: claude-opus-4-5)");
-    println!("  gemini  - Google Gemini CLI agent (default model: gemini-2.5-pro)");
+    println!("  gemini  - Google Gemini CLI agent (default model: auto-gemini-3)");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_usage_limits(
+    harness: &mut Harness,
+    model: &mut String,
+    provider: &mut String,
+    runner: &mut Runner,
+    usage_limit_daily: Option<u8>,
+    usage_limit_weekly: Option<u8>,
+    fallback_harness: Option<Harness>,
+    using_fallback: &mut bool,
+    dangerous: bool,
+    reasoning: &str,
+) -> Result<bool> {
+    let check = usage::check_usage_limits(
+        harness.command_name(),
+        usage_limit_daily,
+        usage_limit_weekly,
+    );
+
+    for warning in check.warnings {
+        eprintln!("Usage check warning: {}", warning);
+    }
+
+    if !check.exceeded {
+        return Ok(true);
+    }
+
+    let reason = check.reasons.join(", ");
+
+    if let Some(fallback) = fallback_harness {
+        if !*using_fallback && fallback != *harness {
+            check_harness_available(&fallback)?;
+            *harness = fallback;
+            *model = harness.default_model().to_string();
+            if *harness == Harness::Pi && provider.is_empty() {
+                *provider = harness.default_provider().to_string();
+            }
+            *runner = Runner::new(
+                *harness,
+                model.clone(),
+                dangerous,
+                reasoning.to_string(),
+                provider.clone(),
+            );
+            *using_fallback = true;
+            eprintln!(
+                "Usage limit reached ({}). Switching to fallback harness: {}",
+                reason,
+                harness.command_name()
+            );
+            return Ok(true);
+        }
+    }
+
+    eprintln!("Usage limit reached ({}). Stopping.", reason);
+    Ok(false)
 }
 
 #[tokio::main]
@@ -178,6 +238,75 @@ async fn main() -> Result<()> {
 
                 return monitor::run_monitor(monitor_config).await;
             }
+            Commands::Install { agent, all, list } => {
+                install::run_install(agent.clone(), *all, *list)?;
+                return Ok(());
+            }
+            Commands::Ps { json, all } => {
+                let processes = process::list_processes();
+                if *json {
+                    process::print_processes_json(&processes)?;
+                } else {
+                    process::print_processes(&processes, *all);
+                }
+                return Ok(());
+            }
+            Commands::Kill {
+                all,
+                dir,
+                harness,
+                pid,
+            } => {
+                if let Some(pid) = pid {
+                    if process::kill_process(*pid)? {
+                        println!("Killed process {}", pid);
+                    } else {
+                        println!("Failed to kill process {}", pid);
+                    }
+                } else if *all {
+                    let (killed, total) = process::kill_all_processes()?;
+                    println!("Killed {}/{} tracked processes", killed, total);
+                } else if let Some(dir) = dir {
+                    let (killed, total) = process::kill_processes_by_dir(dir)?;
+                    println!("Killed {}/{} processes in {}", killed, total, dir);
+                } else if let Some(harness) = harness {
+                    let (killed, total) = process::kill_processes_by_harness(harness)?;
+                    println!("Killed {}/{} {} processes", killed, total, harness);
+                } else {
+                    // Default: kill processes in current directory
+                    let cwd = std::env::current_dir()?.display().to_string();
+                    let (killed, total) = process::kill_processes_by_dir(&cwd)?;
+                    println!("Killed {}/{} processes in current directory", killed, total);
+                }
+                return Ok(());
+            }
+            Commands::Cleanup {
+                discover,
+                kill_orphans,
+            } => {
+                // Clean stale entries
+                let cleaned = process::cleanup_registry()?;
+                println!("Cleaned {} stale process entries", cleaned);
+
+                if *discover {
+                    let orphans = process::discover_orphan_processes()?;
+                    if orphans.is_empty() {
+                        println!("No orphaned agent processes found");
+                    } else {
+                        println!("Found {} orphaned processes:", orphans.len());
+                        process::print_processes(&orphans, false);
+
+                        if *kill_orphans {
+                            for proc in &orphans {
+                                if process::kill_process(proc.pid).unwrap_or(false) {
+                                    println!("Killed orphan {}", proc.pid);
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(());
+            }
         }
     }
 
@@ -219,6 +348,15 @@ async fn main() -> Result<()> {
         .or(config.provider)
         .unwrap_or_else(|| harness.default_provider().to_string());
 
+    let usage_limit_daily = cli.usage_limit_daily.or(config.usage_limit_daily);
+    let usage_limit_weekly = cli.usage_limit_weekly.or(config.usage_limit_weekly);
+    let usage_check_interval = cli.usage_check_interval.or(config.usage_check_interval);
+    let fallback_harness_str = cli.fallback_harness.or(config.fallback_harness);
+    let fallback_harness = match &fallback_harness_str {
+        Some(name) => Some(Harness::from_str(name)?),
+        None => None,
+    };
+
     let task = cli
         .task
         .or(config.task)
@@ -245,9 +383,16 @@ async fn main() -> Result<()> {
 
     // If using tmux, start in tmux session
     if use_tmux && tmux::tmux_available() {
-        let session_name = cli
+        let base_session_name = cli
             .tmux_session
             .unwrap_or_else(|| tmux::generate_session_name(&tmux_prefix, harness.command_name()));
+        let session_name = tmux::unique_session_name(&base_session_name);
+        if session_name != base_session_name {
+            eprintln!(
+                "Session name '{}' already exists, using '{}'",
+                base_session_name, session_name
+            );
+        }
 
         // Build args to pass to ralph (running without tmux inside)
         let mut args = vec![
@@ -272,6 +417,26 @@ async fn main() -> Result<()> {
             args.push(provider_str);
         }
 
+        if let Some(limit) = usage_limit_daily {
+            args.push("--usage-limit-daily".to_string());
+            args.push(limit.to_string());
+        }
+
+        if let Some(limit) = usage_limit_weekly {
+            args.push("--usage-limit-weekly".to_string());
+            args.push(limit.to_string());
+        }
+
+        if let Some(interval) = usage_check_interval {
+            args.push("--usage-check-interval".to_string());
+            args.push(interval.to_string());
+        }
+
+        if let Some(name) = fallback_harness_str {
+            args.push("--fallback-harness".to_string());
+            args.push(name);
+        }
+
         args.push("--no-tmux".to_string()); // Prevent nesting
         args.push(task);
 
@@ -279,20 +444,74 @@ async fn main() -> Result<()> {
     }
 
     // Run directly (no tmux)
-    let runner = Runner::new(harness, model, dangerous, reasoning, provider_str);
+    let mut current_harness = harness;
+    let mut current_model = model;
+    let mut current_provider = provider_str;
+    let mut runner = Runner::new(
+        current_harness,
+        current_model.clone(),
+        dangerous,
+        reasoning.clone(),
+        current_provider.clone(),
+    );
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
 
     ctrlc::set_handler(move || {
-        eprintln!("\nInterrupted. Cleaning up...");
+        eprintln!("\nInterrupted. Cleaning up tracked processes...");
         r.store(false, Ordering::SeqCst);
+
+        // Kill all tracked processes before exiting
+        if let Ok((killed, total)) = process::kill_all_processes() {
+            if total > 0 {
+                eprintln!("Killed {}/{} tracked processes", killed, total);
+            }
+        }
+
         std::process::exit(130);
     })?;
 
+    let mut using_fallback = false;
+    let should_continue = apply_usage_limits(
+        &mut current_harness,
+        &mut current_model,
+        &mut current_provider,
+        &mut runner,
+        usage_limit_daily,
+        usage_limit_weekly,
+        fallback_harness,
+        &mut using_fallback,
+        dangerous,
+        &reasoning,
+    )?;
+    if !should_continue {
+        return Ok(());
+    }
+
     if iterations == "inf" {
+        let interval = usage_check_interval.unwrap_or(0);
+        let mut iteration = 0u32;
         while running.load(Ordering::SeqCst) {
             runner.run(&prompt).await?;
+            iteration = iteration.saturating_add(1);
+            if interval > 0 && iteration.is_multiple_of(interval) {
+                let should_continue = apply_usage_limits(
+                    &mut current_harness,
+                    &mut current_model,
+                    &mut current_provider,
+                    &mut runner,
+                    usage_limit_daily,
+                    usage_limit_weekly,
+                    fallback_harness,
+                    &mut using_fallback,
+                    dangerous,
+                    &reasoning,
+                )?;
+                if !should_continue {
+                    break;
+                }
+            }
         }
     } else {
         let count: u32 = iterations
@@ -309,6 +528,25 @@ async fn main() -> Result<()> {
                 eprintln!("--- Iteration {}/{} ---", i + 1, count);
             }
             runner.run(&prompt).await?;
+            if let Some(interval) = usage_check_interval {
+                if interval > 0 && (i + 1) % interval == 0 {
+                    let should_continue = apply_usage_limits(
+                        &mut current_harness,
+                        &mut current_model,
+                        &mut current_provider,
+                        &mut runner,
+                        usage_limit_daily,
+                        usage_limit_weekly,
+                        fallback_harness,
+                        &mut using_fallback,
+                        dangerous,
+                        &reasoning,
+                    )?;
+                    if !should_continue {
+                        break;
+                    }
+                }
+            }
         }
     }
 

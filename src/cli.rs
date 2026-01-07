@@ -136,6 +136,62 @@ pub enum Commands {
         #[arg()]
         task: Option<String>,
     },
+
+    /// Install CLI agents with available package managers
+    Install {
+        /// Agent name to install
+        #[arg()]
+        agent: Option<String>,
+
+        /// Install all missing agents
+        #[arg(long, conflicts_with = "agent")]
+        all: bool,
+
+        /// Show install commands for each agent
+        #[arg(long, conflicts_with = "agent")]
+        list: bool,
+    },
+
+    /// List and manage spawned agent processes
+    Ps {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Show dead/exited processes too
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Kill spawned agent processes
+    Kill {
+        /// Kill all tracked processes
+        #[arg(long)]
+        all: bool,
+
+        /// Kill processes in a specific directory
+        #[arg(long)]
+        dir: Option<String>,
+
+        /// Kill processes for a specific harness (codex, claude, etc)
+        #[arg(long)]
+        harness: Option<String>,
+
+        /// Specific PID to kill
+        #[arg()]
+        pid: Option<u32>,
+    },
+
+    /// Clean up stale process entries and discover orphans
+    Cleanup {
+        /// Also discover and register orphaned agent processes
+        #[arg(long)]
+        discover: bool,
+
+        /// Kill discovered orphans instead of just registering
+        #[arg(long)]
+        kill_orphans: bool,
+    },
 }
 
 #[cfg(test)]
@@ -340,5 +396,44 @@ mod tests {
         .unwrap();
         assert_eq!(cli.usage_limit_daily, Some(80));
         assert_eq!(cli.usage_limit_weekly, Some(90));
+    }
+
+    #[test]
+    fn test_cli_install_subcommand() {
+        let cli = Cli::try_parse_from(["ralph", "install", "codex"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Install {
+                agent: Some(_),
+                all: false,
+                list: false
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_install_all_flag() {
+        let cli = Cli::try_parse_from(["ralph", "install", "--all"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Install {
+                agent: None,
+                all: true,
+                list: false
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_install_list_flag() {
+        let cli = Cli::try_parse_from(["ralph", "install", "--list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Install {
+                agent: None,
+                all: false,
+                list: true
+            })
+        ));
     }
 }

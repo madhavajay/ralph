@@ -58,7 +58,14 @@ pub async fn run_monitor(config: MonitorConfig) -> Result<()> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let inner_session = format!("ralph-inner-{}", timestamp);
+    let base_inner_session = format!("ralph-inner-{}", timestamp);
+    let inner_session = tmux::unique_session_name(&base_inner_session);
+    if inner_session != base_inner_session {
+        eprintln!(
+            "Session name '{}' already exists, using '{}'",
+            base_inner_session, inner_session
+        );
+    }
 
     // Start the inner agent in a tmux session
     println!(

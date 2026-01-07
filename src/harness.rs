@@ -3,6 +3,8 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::process;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Harness {
     Codex,
@@ -30,7 +32,7 @@ impl Harness {
             Self::Codex => "gpt-5.2-codex",
             Self::Claude => "claude-opus-4-5-20251101",
             Self::Pi => "claude-opus-4-5",
-            Self::Gemini => "gemini-2.5-pro",
+            Self::Gemini => "auto-gemini-3",
         }
     }
 
@@ -108,7 +110,17 @@ impl Runner {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
-        let status = cmd.status().await?;
+        let mut child = cmd.spawn()?;
+        let pid = child.id().unwrap_or(0);
+
+        // Register the process for tracking
+        let _ = process::register_process(pid, "codex", &self.model, None);
+
+        let status = child.wait().await?;
+
+        // Unregister when done
+        let _ = process::unregister_process(pid);
+
         if !status.success() {
             bail!("codex exited with status: {}", status);
         }
@@ -133,6 +145,10 @@ impl Runner {
             .stderr(Stdio::piped());
 
         let mut child = cmd.spawn()?;
+        let pid = child.id().unwrap_or(0);
+
+        // Register the process for tracking
+        let _ = process::register_process(pid, "claude", &self.model, None);
 
         let stdout = child.stdout.take().expect("Failed to capture stdout");
         let stderr = child.stderr.take().expect("Failed to capture stderr");
@@ -162,6 +178,9 @@ impl Runner {
         let _ = stdout_handle.await;
         let _ = stderr_handle.await;
 
+        // Unregister when done
+        let _ = process::unregister_process(pid);
+
         if !status.success() {
             bail!("claude exited with status: {}", status);
         }
@@ -171,34 +190,74 @@ impl Runner {
     fn process_claude_json(json: &serde_json::Value) {
         match json.get("type").and_then(|t| t.as_str()) {
             Some("assistant") => {
-                if let Some(content) = json.get("message").and_then(|m| m.get("content")) {
-                    print!("{}", content);
+                if let Some(message) = json.get("message") {
+                    Self::process_claude_content(message.get("content"));
+                } else {
+                    Self::process_claude_content(json.get("content"));
                 }
             }
             Some("tool_use") => {
-                let name = json
-                    .get("tool_name")
-                    .or_else(|| json.get("name"))
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("unknown");
-                let input = json
-                    .get("tool_input")
-                    .or_else(|| json.get("input"))
-                    .map(|i| i.to_string())
-                    .unwrap_or_default();
-                let truncated: String = input.chars().take(80).collect();
-                println!("\n⚡ {} {}...\n", name, truncated);
+                Self::print_claude_tool_use(json);
             }
             Some("tool_result") => {
-                println!("✓ done\n");
-            }
-            Some("result") => {
-                if let Some(result) = json.get("result") {
-                    println!("{}", result);
-                }
+                Self::print_claude_tool_result(json);
             }
             _ => {}
         }
+    }
+
+    fn process_claude_content(content: Option<&serde_json::Value>) {
+        let Some(content) = content else { return };
+        match content {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    Self::process_claude_content_item(item);
+                }
+            }
+            serde_json::Value::String(text) => {
+                print!("{}", text);
+            }
+            serde_json::Value::Object(_) => {
+                Self::process_claude_content_item(content);
+            }
+            _ => {}
+        }
+    }
+
+    fn process_claude_content_item(item: &serde_json::Value) {
+        match item.get("type").and_then(|t| t.as_str()) {
+            Some("text") => {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    print!("{}", text);
+                }
+            }
+            Some("tool_use") => {
+                Self::print_claude_tool_use(item);
+            }
+            Some("tool_result") => {
+                Self::print_claude_tool_result(item);
+            }
+            _ => {}
+        }
+    }
+
+    fn print_claude_tool_use(json: &serde_json::Value) {
+        let name = json
+            .get("tool_name")
+            .or_else(|| json.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("unknown");
+        let input = json
+            .get("tool_input")
+            .or_else(|| json.get("input"))
+            .map(|i| i.to_string())
+            .unwrap_or_default();
+        let truncated: String = input.chars().take(80).collect();
+        println!("\n⚡ {} {}...\n", name, truncated);
+    }
+
+    fn print_claude_tool_result(_json: &serde_json::Value) {
+        println!("✓ done\n");
     }
 
     async fn run_pi(&self, prompt: &str) -> Result<()> {
@@ -217,7 +276,17 @@ impl Runner {
         // Note: Pi has tools enabled by default (read, bash, edit, write)
         // No dangerous flag needed
 
-        let status = cmd.status().await?;
+        let mut child = cmd.spawn()?;
+        let pid = child.id().unwrap_or(0);
+
+        // Register the process for tracking
+        let _ = process::register_process(pid, "pi", &self.model, None);
+
+        let status = child.wait().await?;
+
+        // Unregister when done
+        let _ = process::unregister_process(pid);
+
         if !status.success() {
             bail!("pi exited with status: {}", status);
         }
@@ -227,8 +296,12 @@ impl Runner {
     async fn run_gemini(&self, prompt: &str) -> Result<()> {
         let mut cmd = Command::new("gemini");
 
-        // Model selection
-        cmd.arg("--model").arg(&self.model);
+        if !self.model.trim().is_empty() {
+            cmd.arg("-m").arg(&self.model);
+        }
+
+        // Stream JSON for structured output parsing
+        cmd.arg("-o").arg("stream-json");
 
         // Dangerous mode uses yolo (auto-approve all tools)
         if self.dangerous {
@@ -237,15 +310,126 @@ impl Runner {
 
         // Positional prompt for non-interactive mode (one-shot)
         // Note: -p flag is deprecated
-        cmd.arg(prompt);
+        cmd.arg(prompt)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        let mut child = cmd.spawn()?;
+        let pid = child.id().unwrap_or(0);
 
-        let status = cmd.status().await?;
+        // Register the process for tracking
+        let _ = process::register_process(pid, "gemini", &self.model, None);
+
+        let stdout = child.stdout.take().expect("Failed to capture stdout");
+        let stderr = child.stderr.take().expect("Failed to capture stderr");
+
+        let stdout_reader = BufReader::new(stdout);
+        let stderr_reader = BufReader::new(stderr);
+
+        let stdout_handle = tokio::spawn(async move {
+            let mut lines = stdout_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                    Self::process_gemini_json(&json);
+                }
+            }
+        });
+
+        let stderr_handle = tokio::spawn(async move {
+            let mut lines = stderr_reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                    Self::process_gemini_json(&json);
+                }
+            }
+        });
+
+        let status = child.wait().await?;
+        let _ = stdout_handle.await;
+        let _ = stderr_handle.await;
+
+        // Unregister when done
+        let _ = process::unregister_process(pid);
+
         if !status.success() {
             bail!("gemini exited with status: {}", status);
         }
         Ok(())
+    }
+
+    fn process_gemini_json(json: &serde_json::Value) {
+        match json.get("type").and_then(|t| t.as_str()) {
+            Some("init") => {
+                let model = json
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown");
+                let session = json
+                    .get("session_id")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                let short_session: String = session.chars().take(8).collect();
+                if short_session.is_empty() {
+                    println!("gemini [{}]", model);
+                } else {
+                    println!("gemini [{}] session={}...", model, short_session);
+                }
+            }
+            Some("message") => {
+                let role = json.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                if role == "assistant" {
+                    if let Some(content) = json.get("content") {
+                        if let Some(text) = content.as_str() {
+                            print!("{}", text);
+                        }
+                    }
+                }
+            }
+            Some("tool_use") => {
+                let name = json
+                    .get("tool_name")
+                    .or_else(|| json.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unknown");
+                let params = json
+                    .get("parameters")
+                    .or_else(|| json.get("input"))
+                    .map(|i| i.to_string())
+                    .unwrap_or_default();
+                let truncated: String = params.chars().take(80).collect();
+                println!("\n⚡ {} {}...\n", name, truncated);
+            }
+            Some("tool_result") => {
+                println!("✓ done\n");
+            }
+            Some("result") => {
+                if let Some(stats) = json.get("stats") {
+                    let total = stats.get("total_tokens").and_then(|v| v.as_u64());
+                    let input = stats.get("input_tokens").and_then(|v| v.as_u64());
+                    let output = stats.get("output_tokens").and_then(|v| v.as_u64());
+                    let duration = stats.get("duration_ms").and_then(|v| v.as_u64());
+                    if total.is_some() || input.is_some() || output.is_some() || duration.is_some()
+                    {
+                        println!(
+                            "\nTokens: {} (in:{} out:{}) duration:{}ms",
+                            total
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                            input
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                            output
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                            duration
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".to_string())
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -292,7 +476,7 @@ mod tests {
         assert_eq!(Harness::Codex.default_model(), "gpt-5.2-codex");
         assert_eq!(Harness::Claude.default_model(), "claude-opus-4-5-20251101");
         assert_eq!(Harness::Pi.default_model(), "claude-opus-4-5");
-        assert_eq!(Harness::Gemini.default_model(), "gemini-2.5-pro");
+        assert_eq!(Harness::Gemini.default_model(), "auto-gemini-3");
     }
 
     #[test]

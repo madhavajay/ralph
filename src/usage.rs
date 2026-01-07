@@ -1,5 +1,6 @@
 use anyhow::Result;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::provider::{codexbar_available, detect_all_providers, ProviderInfo};
 
@@ -43,10 +44,9 @@ impl UsageInfo {
 
 /// Get usage information for a specific provider via codexbar
 fn get_usage_via_codexbar(provider: &str) -> Option<UsageInfo> {
-    let output = Command::new("codexbar")
-        .args(["usage", "--provider", provider, "--source", "cli"])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("codexbar");
+    cmd.args(["usage", "--provider", provider, "--source", "cli"]);
+    let output = command_output_with_timeout(cmd, Duration::from_secs(5))?;
 
     if !output.status.success() {
         return None;
@@ -119,6 +119,27 @@ fn extract_reset_time(s: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn command_output_with_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+) -> Option<std::process::Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    let start = Instant::now();
+
+    loop {
+        if let Ok(Some(_)) = child.try_wait() {
+            return child.wait_with_output().ok();
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Get usage for all detected providers
@@ -233,6 +254,97 @@ pub fn print_usage_json(usage_list: &[UsageInfo]) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Default)]
+pub struct UsageLimitCheck {
+    pub exceeded: bool,
+    pub reasons: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+pub fn check_usage_limits(
+    provider: &str,
+    daily_limit: Option<u8>,
+    weekly_limit: Option<u8>,
+) -> UsageLimitCheck {
+    let mut check = UsageLimitCheck::default();
+
+    if daily_limit.is_none() && weekly_limit.is_none() {
+        return check;
+    }
+
+    let info = match get_provider_usage(provider) {
+        Some(info) => info,
+        None => {
+            check
+                .warnings
+                .push(format!("Unknown provider for usage check: {}", provider));
+            return check;
+        }
+    };
+
+    check_usage_limits_with_info(&info, daily_limit, weekly_limit)
+}
+
+fn check_usage_limits_with_info(
+    usage: &UsageInfo,
+    daily_limit: Option<u8>,
+    weekly_limit: Option<u8>,
+) -> UsageLimitCheck {
+    let mut check = UsageLimitCheck::default();
+
+    if let Some(err) = &usage.error {
+        check
+            .warnings
+            .push(format!("Usage unavailable for {}: {}", usage.provider, err));
+        return check;
+    }
+
+    if let Some(limit) = daily_limit {
+        match usage.session_percent {
+            Some(left) => {
+                let used = used_percent(left);
+                if used >= limit {
+                    check
+                        .reasons
+                        .push(format!("daily usage {}% used (limit {}%)", used, limit));
+                }
+            }
+            None => {
+                check.warnings.push(format!(
+                    "Daily usage data unavailable for {}",
+                    usage.provider
+                ));
+            }
+        }
+    }
+
+    if let Some(limit) = weekly_limit {
+        match usage.weekly_percent {
+            Some(left) => {
+                let used = used_percent(left);
+                if used >= limit {
+                    check
+                        .reasons
+                        .push(format!("weekly usage {}% used (limit {}%)", used, limit));
+                }
+            }
+            None => {
+                check.warnings.push(format!(
+                    "Weekly usage data unavailable for {}",
+                    usage.provider
+                ));
+            }
+        }
+    }
+
+    check.exceeded = !check.reasons.is_empty();
+    check
+}
+
+fn used_percent(left: u8) -> u8 {
+    100u8.saturating_sub(left)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +393,46 @@ Plan: Pro
         let info = UsageInfo::with_error(&provider, "test error".to_string());
         assert_eq!(info.provider, "test");
         assert_eq!(info.error, Some("test error".to_string()));
+    }
+
+    #[test]
+    fn test_usage_limit_check_exceeded() {
+        let usage = UsageInfo {
+            provider: "codex".to_string(),
+            version: None,
+            cli_name: "codex-cli".to_string(),
+            session_percent: Some(10),
+            session_reset: None,
+            weekly_percent: Some(40),
+            weekly_reset: None,
+            account: None,
+            plan: None,
+            error: None,
+        };
+
+        let check = check_usage_limits_with_info(&usage, Some(80), Some(50));
+        assert!(check.exceeded);
+        assert_eq!(check.reasons.len(), 2);
+        assert!(check.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_usage_limit_check_missing_data_warns() {
+        let usage = UsageInfo {
+            provider: "claude".to_string(),
+            version: None,
+            cli_name: "claude-code".to_string(),
+            session_percent: None,
+            session_reset: None,
+            weekly_percent: Some(90),
+            weekly_reset: None,
+            account: None,
+            plan: None,
+            error: None,
+        };
+
+        let check = check_usage_limits_with_info(&usage, Some(80), Some(95));
+        assert!(!check.exceeded);
+        assert_eq!(check.warnings.len(), 1);
     }
 }

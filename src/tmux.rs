@@ -8,11 +8,34 @@ pub fn tmux_available() -> bool {
 
 /// Generate a tmux session name
 pub fn generate_session_name(prefix: &str, harness: &str) -> String {
-    let timestamp = std::time::SystemTime::now()
+    let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{}-{}-{}", prefix, harness, timestamp)
+        .unwrap_or_default();
+    let pid = std::process::id();
+    format!(
+        "{}-{}-{}-{}-{}",
+        prefix,
+        harness,
+        now.as_secs(),
+        now.subsec_nanos(),
+        pid
+    )
+}
+
+/// Ensure a tmux session name is unique by suffixing when needed.
+pub fn unique_session_name(base: &str) -> String {
+    if !session_exists(base) {
+        return base.to_string();
+    }
+
+    let mut counter = 1;
+    loop {
+        let candidate = format!("{}-{}", base, counter);
+        if !session_exists(&candidate) {
+            return candidate;
+        }
+        counter += 1;
+    }
 }
 
 /// Start a command in a new tmux session
