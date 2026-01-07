@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# Handle Ctrl+C - kill child processes and exit
+cleanup() {
+  echo -e "\nInterrupted. Cleaning up..."
+  pkill -P $$ 2>/dev/null
+  exit 130
+}
+trap cleanup INT TERM
+
+# Defaults
+harness="codex"
+model=""
+iterations="1"
+task="TASK.md"
+
+usage() {
+  echo "usage: $0 [-h codex|claude] [-m model] [-n count|inf] [file|prompt]" >&2
+  echo "  -h  harness: codex (default) or claude" >&2
+  echo "  -m  model: defaults to gpt-5.2-codex or claude-opus-4-5-20251101" >&2
+  echo "  -n  iterations: number or 'inf' (default: 1)" >&2
+  exit 1
+}
+
+# Parse flags
+while getopts "h:m:n:" opt; do
+  case "$opt" in
+    h) harness="$OPTARG" ;;
+    m) model="$OPTARG" ;;
+    n) iterations="$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+# Set default models if not specified
+if [ -z "$model" ]; then
+  case "$harness" in
+    codex) model="gpt-5.2-codex" ;;
+    claude) model="claude-opus-4-5-20251101" ;;
+  esac
+fi
+
+# Remaining argument is the task
+if [ -n "$1" ]; then
+  task="$1"
+fi
+
+# Resolve the prompt: if it's a file, read it; otherwise use as string
+if [ -f "$task" ]; then
+  prompt="$(cat "$task")"
+else
+  prompt="$task"
+fi
+
+run_codex() {
+  codex exec -m "$model" -c 'model_reasoning_effort="medium"' -c 'approval_policy="never"' -c 'sandbox_mode="danger-full-access"' "$prompt"
+}
+
+run_claude() {
+  claude --dangerously-skip-permissions --model "$model" --verbose -p --output-format stream-json "$prompt" 2>&1 | jq -r --unbuffered '
+    if .type == "assistant" and .message.content? then
+      .message.content
+    elif .type == "tool_use" then
+      "\n⚡ \(.tool_name // .name) \(.tool_input // .input | tostring | .[0:80])...\n"
+    elif .type == "tool_result" then
+      "✓ done\n"
+    elif .type == "result" and .result? then
+      .result
+    else
+      empty
+    end
+  ' 2>/dev/null
+}
+
+run_harness() {
+  case "$harness" in
+    codex)
+      run_codex
+      ;;
+    claude)
+      run_claude
+      ;;
+    *)
+      echo "Unknown harness: $harness. Use 'codex' or 'claude'." >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [ "$iterations" = "inf" ]; then
+  while true; do
+    run_harness
+  done
+else
+  case "$iterations" in
+    ''|*[!0-9]*)
+      usage
+      ;;
+  esac
+
+  i=0
+  while [ "$i" -lt "$iterations" ]; do
+    run_harness
+    i=$((i + 1))
+  done
+fi

@@ -165,7 +165,12 @@ pub fn get_all_usage() -> Vec<UsageInfo> {
         // Without codexbar, we can't get usage info
         detected
             .iter()
-            .map(|p| UsageInfo::with_error(p, "codexbar not installed".to_string()))
+            .map(|p| {
+                UsageInfo::with_error(
+                    p,
+                    "codexbar not installed (brew install codexbar/codexbar/codexbar)".to_string(),
+                )
+            })
             .collect()
     }
 }
@@ -192,7 +197,7 @@ pub fn get_provider_usage(provider_name: &str) -> Option<UsageInfo> {
     } else {
         Some(UsageInfo::with_error(
             provider,
-            "codexbar not installed".to_string(),
+            "codexbar not installed (brew install codexbar/codexbar/codexbar)".to_string(),
         ))
     }
 }

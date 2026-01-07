@@ -13,7 +13,7 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{info, trace};
 
 use cli::{Cli, Commands};
 use config::Config;
@@ -339,7 +339,11 @@ async fn main() -> Result<()> {
                     if log_dir.exists() {
                         for entry in std::fs::read_dir(&log_dir)? {
                             let entry = entry?;
-                            if entry.path().extension().map(|e| e == "log").unwrap_or(false)
+                            if entry
+                                .path()
+                                .extension()
+                                .map(|e| e == "log")
+                                .unwrap_or(false)
                                 || entry.file_name().to_string_lossy().starts_with("ralph.")
                             {
                                 std::fs::remove_file(entry.path())?;

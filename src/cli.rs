@@ -208,7 +208,7 @@ pub enum Commands {
     /// View and manage logs
     Logs {
         /// Number of lines to tail (0 for all)
-        #[arg(short = 'n', long, default_value = "50")]
+        #[arg(long, default_value = "50")]
         lines: usize,
 
         /// Follow log output (like tail -f)
@@ -242,6 +242,9 @@ mod tests {
         assert!(!cli.list_harnesses);
         assert!(!cli.init);
         assert!(cli.command.is_none());
+        assert_eq!(cli.verbose, 0);
+        assert!(!cli.log_stderr);
+        assert!(!cli.log_file);
     }
 
     #[test]

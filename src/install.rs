@@ -54,17 +54,7 @@ const INSTALLABLE_AGENTS: &[InstallTarget] = &[
     InstallTarget {
         name: "pi",
         command: "pi",
-        description: "Pi CLI",
-    },
-    InstallTarget {
-        name: "aider",
-        command: "aider",
-        description: "Aider CLI",
-    },
-    InstallTarget {
-        name: "goose",
-        command: "goose",
-        description: "Goose CLI",
+        description: "Pi Coding Agent",
     },
 ];
 
@@ -97,39 +87,9 @@ const INSTALL_METHODS: &[InstallMethod] = &[
     },
     InstallMethod {
         agent: "pi",
-        manager: PackageManager::Cargo,
-        program: "cargo",
-        args: &["install", "pi-cli"],
-    },
-    InstallMethod {
-        agent: "aider",
-        manager: PackageManager::Pipx,
-        program: "pipx",
-        args: &["install", "aider-chat"],
-    },
-    InstallMethod {
-        agent: "aider",
-        manager: PackageManager::Pip,
-        program: "pip",
-        args: &["install", "aider-chat"],
-    },
-    InstallMethod {
-        agent: "aider",
-        manager: PackageManager::Brew,
-        program: "brew",
-        args: &["install", "aider"],
-    },
-    InstallMethod {
-        agent: "goose",
-        manager: PackageManager::Pipx,
-        program: "pipx",
-        args: &["install", "goose-ai"],
-    },
-    InstallMethod {
-        agent: "goose",
-        manager: PackageManager::Pip,
-        program: "pip",
-        args: &["install", "goose-ai"],
+        manager: PackageManager::Npm,
+        program: "npm",
+        args: &["install", "-g", "@mariozechner/pi-coding-agent"],
     },
 ];
 
