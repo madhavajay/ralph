@@ -223,6 +223,21 @@ pub enum Commands {
         #[arg(long)]
         clear: bool,
     },
+
+    /// List ralph tmux sessions and attach interactively
+    Sessions {
+        /// Print sessions and exit (no interactive UI)
+        #[arg(long)]
+        list: bool,
+
+        /// Attach directly to a session by name
+        #[arg(long)]
+        attach: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[cfg(test)]

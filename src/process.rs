@@ -24,41 +24,41 @@ fn process_is_alive(pid: u32) -> bool {
         if std::path::Path::new(&format!("/proc/{}", pid)).exists() {
             return true;
         }
-        return unix_pid_exists(pid);
+        unix_pid_exists(pid)
     }
 
     #[cfg(all(unix, not(target_os = "linux")))]
     {
-        return unix_pid_exists(pid);
+        unix_pid_exists(pid)
     }
 
     #[cfg(windows)]
     {
-        return windows_pid_exists(pid);
+        windows_pid_exists(pid)
     }
 }
 
 fn send_terminate(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        return unix_send_signal(pid, "-TERM");
+        unix_send_signal(pid, "-TERM")
     }
 
     #[cfg(windows)]
     {
-        return windows_taskkill(pid, false);
+        windows_taskkill(pid, false)
     }
 }
 
 fn send_kill(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        return unix_send_signal(pid, "-KILL");
+        unix_send_signal(pid, "-KILL")
     }
 
     #[cfg(windows)]
     {
-        return windows_taskkill(pid, true);
+        windows_taskkill(pid, true)
     }
 }
 
@@ -96,13 +96,7 @@ fn unix_pid_exists(pid: u32) -> bool {
 #[cfg(windows)]
 fn windows_pid_exists(pid: u32) -> bool {
     let output = std::process::Command::new("tasklist")
-        .args([
-            "/FO",
-            "CSV",
-            "/NH",
-            "/FI",
-            &format!("PID eq {}", pid),
-        ])
+        .args(["/FO", "CSV", "/NH", "/FI", &format!("PID eq {}", pid)])
         .output();
     let Ok(output) = output else {
         return false;
@@ -144,7 +138,9 @@ fn process_started_at(_pid: u32) -> Option<u64> {
 
 #[cfg(unix)]
 fn find_pids_by_name(name: &str) -> Vec<u32> {
-    let output = std::process::Command::new("pgrep").args(["-f", name]).output();
+    let output = std::process::Command::new("pgrep")
+        .args(["-f", name])
+        .output();
     let Ok(output) = output else {
         return Vec::new();
     };
@@ -466,7 +462,11 @@ pub fn kill_process(pid: u32) -> Result<bool> {
     }
 
     let alive_before = process_is_alive(pid);
-    let terminated = if alive_before { send_terminate(pid) } else { true };
+    let terminated = if alive_before {
+        send_terminate(pid)
+    } else {
+        true
+    };
 
     if terminated {
         // Give it a moment to die

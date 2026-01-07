@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use serde::Serialize;
 use std::process::Command;
 
 /// Check if tmux is available
@@ -138,27 +139,106 @@ pub fn kill_session(session_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// List all ralph tmux sessions
-#[allow(dead_code)]
-pub fn list_ralph_sessions() -> Result<Vec<String>> {
+#[derive(Debug, Clone, Serialize)]
+pub struct TmuxSession {
+    pub name: String,
+    pub attached: bool,
+    pub windows: u32,
+    pub created: String,
+}
+
+/// Attach to a tmux session
+pub fn attach_session(session_name: &str) -> Result<()> {
+    let status = Command::new("tmux")
+        .args(["attach", "-t", session_name])
+        .status()
+        .context("Failed to attach to tmux session")?;
+
+    if !status.success() {
+        bail!("Failed to attach to tmux session: {}", session_name);
+    }
+
+    Ok(())
+}
+
+/// List all ralph tmux sessions with metadata
+pub fn list_ralph_sessions() -> Result<Vec<TmuxSession>> {
     let output = Command::new("tmux")
-        .args(["list-sessions", "-F", "#{session_name}"])
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{session_attached}\t#{session_windows}\t#{session_created_string}",
+        ])
         .output()
         .context("Failed to list tmux sessions")?;
 
     if !output.status.success() {
-        // No sessions is not an error
-        return Ok(vec![]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("no server running") {
+            return Ok(vec![]);
+        }
+        bail!("Failed to list tmux sessions: {}", stderr.trim());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<String> = stdout
-        .lines()
-        .filter(|line| line.starts_with("ralph"))
-        .map(|s| s.to_string())
-        .collect();
+    let mut sessions = Vec::new();
+    for line in stdout.lines() {
+        let mut parts = line.split('\t');
+        let name = match parts.next() {
+            Some(value) => value,
+            None => continue,
+        };
+        if !name.starts_with("ralph") {
+            continue;
+        }
+        let attached = parts.next().unwrap_or("0") == "1";
+        let windows = parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        let created = parts.next().unwrap_or("").to_string();
+
+        sessions.push(TmuxSession {
+            name: name.to_string(),
+            attached,
+            windows,
+            created,
+        });
+    }
 
     Ok(sessions)
+}
+
+pub fn session_label(session: &TmuxSession) -> String {
+    let status = if session.attached {
+        "attached"
+    } else {
+        "detached"
+    };
+    format!(
+        "{}  [{}]  {}w  {}",
+        session.name, status, session.windows, session.created
+    )
+}
+
+pub fn print_sessions(sessions: &[TmuxSession]) {
+    println!("{:<24} {:<9} {:<7} CREATED", "SESSION", "STATUS", "WINDOWS");
+    for session in sessions {
+        let status = if session.attached {
+            "attached"
+        } else {
+            "detached"
+        };
+        println!(
+            "{:<24} {:<9} {:<7} {}",
+            session.name, status, session.windows, session.created
+        );
+    }
+}
+
+pub fn print_sessions_json(sessions: &[TmuxSession]) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(sessions)?);
+    Ok(())
 }
 
 #[cfg(test)]

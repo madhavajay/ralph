@@ -11,6 +11,8 @@ mod usage;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use dialoguer::{theme::ColorfulTheme, Select};
+use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{info, trace};
@@ -382,6 +384,48 @@ async fn main() -> Result<()> {
                         println!("{}", line);
                     }
                 }
+                return Ok(());
+            }
+            Commands::Sessions { list, attach, json } => {
+                if !tmux::tmux_available() {
+                    bail!("tmux is not available. Please install tmux first.");
+                }
+
+                let sessions = tmux::list_ralph_sessions()?;
+                if sessions.is_empty() {
+                    println!("No ralph tmux sessions found.");
+                    return Ok(());
+                }
+
+                if *json {
+                    tmux::print_sessions_json(&sessions)?;
+                    return Ok(());
+                }
+
+                if let Some(name) = attach {
+                    eprintln!("Attaching to {} (detach with Ctrl+b d)...", name);
+                    tmux::attach_session(name)?;
+                    return Ok(());
+                }
+
+                if *list || !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                    tmux::print_sessions(&sessions);
+                    return Ok(());
+                }
+
+                let labels: Vec<String> = sessions.iter().map(tmux::session_label).collect();
+                let selection = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Select a ralph tmux session")
+                    .items(&labels)
+                    .default(0)
+                    .interact_opt()?;
+
+                if let Some(index) = selection {
+                    let name = &sessions[index].name;
+                    eprintln!("Attaching to {} (detach with Ctrl+b d)...", name);
+                    tmux::attach_session(name)?;
+                }
+
                 return Ok(());
             }
         }
