@@ -156,6 +156,7 @@ Commands:
   kill       Kill spawned agent processes
   cleanup    Clean up stale process entries and discover orphans
   logs       View and manage logs
+  sessions   List ralph tmux sessions and attach interactively
   monitor    Run monitor mode (outer agent watches inner agent)
   help       Print this message or the help of the given subcommand(s)
 
