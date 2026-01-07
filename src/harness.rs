@@ -18,7 +18,10 @@ impl Harness {
             "claude" => Ok(Self::Claude),
             "pi" => Ok(Self::Pi),
             "gemini" => Ok(Self::Gemini),
-            _ => bail!("Unknown harness: {}. Valid options: codex, claude, pi, gemini", s),
+            _ => bail!(
+                "Unknown harness: {}. Valid options: codex, claude, pi, gemini",
+                s
+            ),
         }
     }
 
@@ -26,8 +29,15 @@ impl Harness {
         match self {
             Self::Codex => "gpt-5.2-codex",
             Self::Claude => "claude-opus-4-5-20251101",
-            Self::Pi => "pi",
+            Self::Pi => "claude-opus-4-5",
             Self::Gemini => "gemini-2.5-pro",
+        }
+    }
+
+    pub fn default_provider(&self) -> &'static str {
+        match self {
+            Self::Pi => "anthropic",
+            _ => "",
         }
     }
 
@@ -42,19 +52,27 @@ impl Harness {
 }
 
 pub struct Runner {
-    harness: Harness,
-    model: String,
-    dangerous: bool,
-    reasoning_effort: String,
+    pub(crate) harness: Harness,
+    pub(crate) model: String,
+    pub(crate) dangerous: bool,
+    pub(crate) reasoning_effort: String,
+    pub(crate) provider: String,
 }
 
 impl Runner {
-    pub fn new(harness: Harness, model: String, dangerous: bool, reasoning_effort: String) -> Self {
+    pub fn new(
+        harness: Harness,
+        model: String,
+        dangerous: bool,
+        reasoning_effort: String,
+        provider: String,
+    ) -> Self {
         Self {
             harness,
             model,
             dangerous,
             reasoning_effort,
+            provider,
         }
     }
 
@@ -70,14 +88,20 @@ impl Runner {
     async fn run_codex(&self, prompt: &str) -> Result<()> {
         let mut cmd = Command::new("codex");
         cmd.arg("exec")
+            .arg("--skip-git-repo-check") // Allow running in non-git directories
             .arg("-m")
             .arg(&self.model)
             .arg("-c")
-            .arg(format!("model_reasoning_effort=\"{}\"", self.reasoning_effort));
+            .arg(format!(
+                "model_reasoning_effort=\"{}\"",
+                self.reasoning_effort
+            ));
 
         if self.dangerous {
-            cmd.arg("-c").arg("approval_policy=\"never\"")
-                .arg("-c").arg("sandbox_mode=\"danger-full-access\"");
+            cmd.arg("-c")
+                .arg("approval_policy=\"never\"")
+                .arg("-c")
+                .arg("sandbox_mode=\"danger-full-access\"");
         }
 
         cmd.arg(prompt)
@@ -152,11 +176,13 @@ impl Runner {
                 }
             }
             Some("tool_use") => {
-                let name = json.get("tool_name")
+                let name = json
+                    .get("tool_name")
                     .or_else(|| json.get("name"))
                     .and_then(|n| n.as_str())
                     .unwrap_or("unknown");
-                let input = json.get("tool_input")
+                let input = json
+                    .get("tool_input")
                     .or_else(|| json.get("input"))
                     .map(|i| i.to_string())
                     .unwrap_or_default();
@@ -178,16 +204,18 @@ impl Runner {
     async fn run_pi(&self, prompt: &str) -> Result<()> {
         let mut cmd = Command::new("pi");
 
-        if self.dangerous {
-            cmd.arg("--dangerously-skip-permissions");
-        }
-
-        cmd.arg("--model")
+        // Pi requires --provider and --model flags
+        cmd.arg("--provider")
+            .arg(&self.provider)
+            .arg("--model")
             .arg(&self.model)
-            .arg("-p")
+            .arg("-p") // Non-interactive print mode
             .arg(prompt)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
+
+        // Note: Pi has tools enabled by default (read, bash, edit, write)
+        // No dangerous flag needed
 
         let status = cmd.status().await?;
         if !status.success() {
@@ -199,21 +227,103 @@ impl Runner {
     async fn run_gemini(&self, prompt: &str) -> Result<()> {
         let mut cmd = Command::new("gemini");
 
+        // Model selection
+        cmd.arg("--model").arg(&self.model);
+
+        // Dangerous mode uses yolo (auto-approve all tools)
         if self.dangerous {
-            cmd.arg("--sandbox").arg("none");
+            cmd.arg("--yolo");
         }
 
-        cmd.arg("--model")
-            .arg(&self.model)
-            .arg("-p")
-            .arg(prompt)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+        // Positional prompt for non-interactive mode (one-shot)
+        // Note: -p flag is deprecated
+        cmd.arg(prompt);
+
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
         let status = cmd.status().await?;
         if !status.success() {
             bail!("gemini exited with status: {}", status);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_harness_from_str_codex() {
+        assert_eq!(Harness::from_str("codex").unwrap(), Harness::Codex);
+        assert_eq!(Harness::from_str("CODEX").unwrap(), Harness::Codex);
+        assert_eq!(Harness::from_str("Codex").unwrap(), Harness::Codex);
+    }
+
+    #[test]
+    fn test_harness_from_str_claude() {
+        assert_eq!(Harness::from_str("claude").unwrap(), Harness::Claude);
+        assert_eq!(Harness::from_str("CLAUDE").unwrap(), Harness::Claude);
+    }
+
+    #[test]
+    fn test_harness_from_str_pi() {
+        assert_eq!(Harness::from_str("pi").unwrap(), Harness::Pi);
+        assert_eq!(Harness::from_str("PI").unwrap(), Harness::Pi);
+    }
+
+    #[test]
+    fn test_harness_from_str_gemini() {
+        assert_eq!(Harness::from_str("gemini").unwrap(), Harness::Gemini);
+        assert_eq!(Harness::from_str("GEMINI").unwrap(), Harness::Gemini);
+    }
+
+    #[test]
+    fn test_harness_from_str_invalid() {
+        let result = Harness::from_str("invalid");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown harness"));
+        assert!(err.contains("invalid"));
+    }
+
+    #[test]
+    fn test_harness_default_model() {
+        assert_eq!(Harness::Codex.default_model(), "gpt-5.2-codex");
+        assert_eq!(Harness::Claude.default_model(), "claude-opus-4-5-20251101");
+        assert_eq!(Harness::Pi.default_model(), "claude-opus-4-5");
+        assert_eq!(Harness::Gemini.default_model(), "gemini-2.5-pro");
+    }
+
+    #[test]
+    fn test_harness_default_provider() {
+        assert_eq!(Harness::Pi.default_provider(), "anthropic");
+        assert_eq!(Harness::Codex.default_provider(), "");
+        assert_eq!(Harness::Claude.default_provider(), "");
+        assert_eq!(Harness::Gemini.default_provider(), "");
+    }
+
+    #[test]
+    fn test_harness_command_name() {
+        assert_eq!(Harness::Codex.command_name(), "codex");
+        assert_eq!(Harness::Claude.command_name(), "claude");
+        assert_eq!(Harness::Pi.command_name(), "pi");
+        assert_eq!(Harness::Gemini.command_name(), "gemini");
+    }
+
+    #[test]
+    fn test_runner_new() {
+        let runner = Runner::new(
+            Harness::Claude,
+            "test-model".to_string(),
+            true,
+            "high".to_string(),
+            "anthropic".to_string(),
+        );
+        assert_eq!(runner.harness, Harness::Claude);
+        assert_eq!(runner.model, "test-model");
+        assert!(runner.dangerous);
+        assert_eq!(runner.reasoning_effort, "high");
+        assert_eq!(runner.provider, "anthropic");
     }
 }
