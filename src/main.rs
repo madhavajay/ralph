@@ -22,9 +22,13 @@ use config::Config;
 use harness::{Harness, Runner};
 
 fn check_harness_available(harness: &Harness) -> Result<()> {
-    let cmd = harness.command_name();
-    which::which(cmd)
-        .with_context(|| format!("'{}' not found in PATH. Please install it first.", cmd))?;
+    let cmd = harness.exec_command();
+    which::which(cmd).with_context(|| {
+        format!(
+            "'{}' not found in PATH. Please install it first.",
+            harness.command_name()
+        )
+    })?;
     Ok(())
 }
 

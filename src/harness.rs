@@ -52,6 +52,22 @@ impl Harness {
             Self::Gemini => "gemini",
         }
     }
+
+    #[cfg(windows)]
+    pub fn exec_command(&self) -> &'static str {
+        // NPM shims include a Unix shell script without extension; prefer .cmd on Windows.
+        match self {
+            Self::Codex => "codex.cmd",
+            Self::Claude => "claude.cmd",
+            Self::Pi => "pi.cmd",
+            Self::Gemini => "gemini.cmd",
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn exec_command(&self) -> &'static str {
+        self.command_name()
+    }
 }
 
 pub struct Runner {
@@ -96,7 +112,7 @@ impl Runner {
     }
 
     async fn run_codex(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new("codex");
+        let mut cmd = Command::new(self.harness.exec_command());
         cmd.arg("exec")
             .arg("--skip-git-repo-check") // Allow running in non-git directories
             .arg("-m")
@@ -141,7 +157,7 @@ impl Runner {
     }
 
     async fn run_claude(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new("claude");
+        let mut cmd = Command::new(self.harness.exec_command());
 
         if self.dangerous {
             cmd.arg("--dangerously-skip-permissions");
@@ -314,7 +330,7 @@ impl Runner {
     }
 
     async fn run_pi(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new("pi");
+        let mut cmd = Command::new(self.harness.exec_command());
 
         // Pi requires --provider and --model flags
         cmd.arg("--provider")
@@ -352,7 +368,7 @@ impl Runner {
     }
 
     async fn run_gemini(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new("gemini");
+        let mut cmd = Command::new(self.harness.exec_command());
 
         if !self.model.trim().is_empty() {
             cmd.arg("-m").arg(&self.model);
