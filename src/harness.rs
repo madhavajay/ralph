@@ -111,8 +111,21 @@ impl Runner {
         result
     }
 
+    #[cfg(windows)]
+    fn create_command(&self) -> Command {
+        // On Windows, .cmd files need to be run through cmd.exe to properly handle arguments
+        let mut cmd = Command::new("cmd.exe");
+        cmd.arg("/C").arg(self.harness.exec_command());
+        cmd
+    }
+
+    #[cfg(not(windows))]
+    fn create_command(&self) -> Command {
+        Command::new(self.harness.exec_command())
+    }
+
     async fn run_codex(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new(self.harness.exec_command());
+        let mut cmd = self.create_command();
         cmd.arg("exec")
             .arg("--skip-git-repo-check") // Allow running in non-git directories
             .arg("-m")
@@ -157,7 +170,7 @@ impl Runner {
     }
 
     async fn run_claude(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new(self.harness.exec_command());
+        let mut cmd = self.create_command();
 
         if self.dangerous {
             cmd.arg("--dangerously-skip-permissions");
@@ -330,7 +343,7 @@ impl Runner {
     }
 
     async fn run_pi(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new(self.harness.exec_command());
+        let mut cmd = self.create_command();
 
         // Pi requires --provider and --model flags
         cmd.arg("--provider")
@@ -368,7 +381,7 @@ impl Runner {
     }
 
     async fn run_gemini(&self, prompt: &str) -> Result<()> {
-        let mut cmd = Command::new(self.harness.exec_command());
+        let mut cmd = self.create_command();
 
         if !self.model.trim().is_empty() {
             cmd.arg("-m").arg(&self.model);
