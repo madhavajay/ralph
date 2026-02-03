@@ -55,6 +55,31 @@ pub struct Cli {
     #[arg(long)]
     pub init: bool,
 
+    // Loop mode options
+    /// Enable loop mode with task management
+    #[arg(long, env = "RALPH_LOOP", global = true)]
+    pub loop_mode: bool,
+
+    /// Maximum iterations in loop mode (default: 200)
+    #[arg(long, env = "RALPH_MAX_ITER", global = true)]
+    pub max_iter: Option<u32>,
+
+    /// Task file for loop mode (default: fix_plan.md)
+    #[arg(long, env = "RALPH_TASK_FILE", global = true)]
+    pub task_file: Option<String>,
+
+    /// Validation command to run after each iteration
+    #[arg(long, env = "RALPH_VALIDATE_CMD", global = true)]
+    pub validate_cmd: Option<String>,
+
+    /// Resume a previous run (optionally specify run ID)
+    #[arg(long, env = "RALPH_RESUME", global = true)]
+    pub resume: Option<Option<String>>,
+
+    /// Checkpoint interval in seconds (default: 60, 0 = disabled)
+    #[arg(long, env = "RALPH_CHECKPOINT_INTERVAL", global = true)]
+    pub checkpoint_interval: Option<u64>,
+
     // Tmux options
     /// Run in tmux session
     #[arg(long, env = "RALPH_TMUX", global = true)]
@@ -233,6 +258,25 @@ pub enum Commands {
         /// Attach directly to a session by name
         #[arg(long)]
         attach: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List and manage loop runs
+    Runs {
+        /// List all saved runs
+        #[arg(long)]
+        list: bool,
+
+        /// Show details for a specific run
+        #[arg(long)]
+        show: Option<String>,
+
+        /// Clean up old runs (keep last N, default: 10)
+        #[arg(long)]
+        cleanup: Option<usize>,
 
         /// Output as JSON
         #[arg(long)]
